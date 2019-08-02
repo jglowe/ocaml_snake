@@ -1,0 +1,6 @@
+(executable
+ (name snake)
+ (libraries graphics curses)
+ (modules snake)
+ (preprocess
+  (pps ppx_jane)))

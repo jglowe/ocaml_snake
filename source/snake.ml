@@ -10,11 +10,14 @@
 open Graphics
 
 (*
- * Exceptions and types used
+ * types used
  *)
-exception Snake_out_of_bounds
 
-exception Snake_hit_itself
+type game_end_condition =
+  | Snake_out_of_bounds
+  | Snake_hit_itself
+  | Player_exit
+  | Player_won
 
 type snake_block = Empty | Apple | Snake of int
 
@@ -119,62 +122,65 @@ let move_snake state =
                 (if pos < state.max_length then Snake (pos + 1) else Empty))
         column)
     state.grid ;
-  (* Moves the snake's location corresponding to its direction *)
-  let head_x, head_y =
+  (* Moves the snake's location corresponding to its direction and ensures that
+   * the snake doesn't go out of bounds *)
+  let state =
     match state.motion with
-    | Up -> (state.head_x, state.head_y + 1)
-    | Down -> (state.head_x, state.head_y - 1)
-    | Right -> (state.head_x + 1, state.head_y)
-    | Left -> (state.head_x - 1, state.head_y)
-    | Stationary -> (state.head_x, state.head_y)
+    | Up ->
+        if state.head_y + 1 >= grid_height then Error Snake_out_of_bounds
+        else Ok {state with head_y = state.head_y + 1}
+    | Down ->
+        if state.head_y - 1 < 0 then Error Snake_out_of_bounds
+        else Ok {state with head_y = state.head_y - 1}
+    | Right ->
+        if state.head_x + 1 >= grid_width then Error Snake_out_of_bounds
+        else Ok {state with head_x = state.head_x + 1}
+    | Left ->
+        if state.head_x - 1 < 0 then Error Snake_out_of_bounds
+        else Ok {state with head_x = state.head_x - 1}
+    | Stationary -> Ok state
   in
-  (* Ensures that the snake doesn't go out of bounds *)
-  if head_y >= grid_height then raise Snake_out_of_bounds ;
-  if head_y < 0 then raise Snake_out_of_bounds ;
-  if head_x >= grid_width then raise Snake_out_of_bounds ;
-  if head_x < 0 then raise Snake_out_of_bounds ;
-  (* Eat the apple if it is there and check to ensure it doesn't hit itself *)
-  let max_length =
-    match (state.motion, state.grid.(head_x).(head_y)) with
-    | Stationary, _ | _, Empty -> state.max_length
-    | _, Apple -> place_apple state.grid ; state.max_length + 1
-    | _, Snake _ -> raise Snake_hit_itself
-  in
-  (* Moves snake's head in the grid *)
-  state.grid.(head_x).(head_y) <- Snake 0 ;
-  {state with head_x; head_y; max_length}
+  match state with
+  | Ok state -> (
+    (* Eat the apple if it is there and check to ensure it doesn't hit itself *)
+    match (state.motion, state.grid.(state.head_x).(state.head_y)) with
+    | Stationary, _ | _, Empty ->
+        state.grid.(state.head_x).(state.head_y) <- Snake 0 ;
+        Ok state
+    | _, Apple ->
+        place_apple state.grid ;
+        state.grid.(state.head_x).(state.head_y) <- Snake 0 ;
+        Ok {state with max_length = state.max_length + 1}
+    | _, Snake _ -> Error Snake_hit_itself )
+  | Error e -> Error e
 
-let rec main_loop state =
+let get_input state =
   let rec get_last_keypress key =
     if key_pressed () then get_last_keypress (read_key ()) else key
   in
-  let state =
-    if key_pressed () then
-      match read_key () with
-      | '\027' ->
-          print_endline "Escape key pressed exiting" ;
-          raise Exit
-      | key ->
-          (* Move in the direction of the keypress except ignore keypresses in
-           * the opposite direction of motion. *)
-          {
-            state with
-            motion =
-              ( match (state.motion, get_last_keypress key) with
-              | Right, '\037' | Right, 'h' | Right, 'H' -> Right
-              | _, '\037' | _, 'h' | _, 'H' -> Left
-              | Down, '\038' | Down, 'k' | Down, 'K' -> Down
-              | _, '\038' | _, 'k' | _, 'K' -> Up
-              | Left, '\039' | Left, 'l' | Left, 'L' -> Left
-              | _, '\039' | _, 'l' | _, 'L' -> Right
-              | Up, '\040' | Up, 'j' | Up, 'J' -> Up
-              | _, '\040' | _, 'j' | _, 'J' -> Down
-              | _, _ -> state.motion );
-          }
-    else state
-  in
-  let state = move_snake state in
-  draw_frame state ; Unix.sleepf 0.1 ; main_loop state
+  if key_pressed () then (
+    match (state.motion, get_last_keypress (read_key ())) with
+    | _, '\027' -> Error Player_exit
+    (* Move in the direction of the keypress except ignore keypresses in
+     * the opposite direction of motion. *)
+    | Right, 'h' | Right, 'H' -> Ok {state with motion = Right}
+    | _, 'h' | _, 'H' -> Ok {state with motion = Left}
+    | Down, 'k' | Down, 'K' -> Ok {state with motion = Down}
+    | _, 'k' | _, 'K' -> Ok {state with motion = Up}
+    | Left, 'l' | Left, 'L' -> Ok {state with motion = Left}
+    | _, 'l' | _, 'L' -> Ok {state with motion = Right}
+    | Up, 'j' | Up, 'J' -> Ok {state with motion = Up}
+    | _, 'j' | _, 'J' -> Ok {state with motion = Down}
+    | _, k -> print_char k ; print_endline "" ; Ok state )
+  else Ok state
+
+let rec game_loop state =
+  match get_input state with
+  | Ok state -> (
+    match move_snake state with
+    | Ok state -> draw_frame state ; Unix.sleepf 0.1 ; game_loop state
+    | Error e -> e )
+  | Error e -> e
 
 let get_initial_state () =
   let grid = Array.make_matrix grid_width grid_height Empty in
@@ -191,4 +197,4 @@ let get_initial_state () =
 
 let _ = open_graph ""
 
-let _ = main_loop (get_initial_state ())
+let _ = game_loop (get_initial_state ())
